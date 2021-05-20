@@ -19,11 +19,16 @@ must be some kind of controller managing the traffic shifting over time.
 Weighting traffic between various services is also more generally useful than
 driving canary releases.
 
-The resource is associated with a *root* service. This is referenced via
-`spec.service`. The `spec.service` name is the FQDN that applications will use
+The `TrafficSplit` resource is associated with a *root* FQDN.
+This is referenced via `spec.service`.
+The `spec.service` name is the FQDN that applications will use
 to communicate. For any *clients* that are not forwarding their traffic through
-a proxy that implements this proposal, the standard Kubernetes service
+a proxy that implements this proposal, the standard FQDN
 configuration would continue to operate.
+
+The *root* FQDN (`spec.service`) can either be
+  (1) a Kubernetes service's FQDN (such as servicename.service-namespace)
+  (2) an endpoint that resolves to the FQDN (such as foo.com)
 
 Implementations will weight outgoing traffic between the services referenced by
 `spec.backends`. Each backend is a Kubernetes service that potentially has a
@@ -32,8 +37,9 @@ different selector and type. Weights must be whole numbers.
 To accommodate A/B testing scenarios, a traffic split can take into account
 HTTP header filters and route a specific user segment to a backend while
 all the other users not belonging to that segment will be routed to the
-default service backend e.g. the Kubernetes service that matches
-the *root* name. The HTTP header filters can be specified using the
+default backend e.g. the resource or Kubernetes service that resolves
+to the *root* FQDN (`spec.service`).
+The HTTP header filters can be specified using the
 [HTTPRouteGroup](/apis/traffic-specs/v1alpha4/traffic-specs.md) API, a
 traffic split can refer HTTP route groups via `spec.matches` thus
 applying the header filters described in those groups.
@@ -45,8 +51,11 @@ kind: TrafficSplit
 metadata:
   name: canary
 spec:
-  # The root service that clients use to connect to the destination application.
-  service: website
+  # The root FQDN that clients use to connect to the destination application.
+  # The *root* FQDN can either be
+  #   (1) a Kubernetes service's FQDN (such as servicename.service-namespace)
+  #   (2) an endpoint that resolves to the FQDN (such as foo.com)
+  service: website.website-namespace
   # Services inside the namespace with their own selectors, endpoints and configuration.
   backends:
   - service: website-v1
@@ -55,8 +64,8 @@ spec:
     weight: 10
 ```
 
-The above configuration will route 90% of the `website` incoming
-traffic to the `website-v1` service and 10% to `website-v2` service.
+The above configuration will route 90% of the `website.website-namespace` 
+incoming traffic to the `website-v1` service and 10% to `website-v2` service.
 
 A/B test example:
 
@@ -65,7 +74,7 @@ kind: TrafficSplit
 metadata:
   name: ab-test
 spec:
-  service: website
+  service: website.website-namespace
   matches:
   - kind: HTTPRouteGroup
     name: ab-test
@@ -86,11 +95,13 @@ matches:
 
 The above configuration will route the Firefox users
 to the `website-v2` service while all the others
-will be routed to the *root* Kubernetes service.
+will be routed to the endpoint or Kubernetes service
+that resolves to the *root* fqdn `spec.service`,
+which is `website.website-namespace`.
 
 If the header conditions don't match the incoming request,
-then routing will be handled by the Kubernetes service
-with the same name as `spec.service`.
+then routing will be handled by the resource that resolves
+to `spec.service`, which is `website.website-namespace`.
 
 If multiple HTTP route groups are specified, all routes
 will be merged into a single group.
@@ -219,7 +230,7 @@ resources:
 * Deployment named `foobar-v1`, with labels: `app: foobar` and `version: v1`.
 * Service named `foobar`, with a selector of `app: foobar`.
 * Service named `foobar-v1`, with selectors: `app:foobar` and `version: v1`.
-* Clients use the FQDN of `foobar` to communicate.
+* Clients use the FQDN of `foobar.foobar-namespace` to communicate.
 
 In order to update an application, the user will perform the following actions:
 
@@ -230,7 +241,7 @@ In order to update an application, the user will perform the following actions:
     metadata:
       name: foobar-rollout
     spec:
-      service: foobar
+      service: foobar.foobar-namespace
       backends:
       - service: foobar-v1
         weight: 100
@@ -262,7 +273,7 @@ At this point, the SMI implementation does not redirect any traffic to
     metadata:
       name: foobar-rollout
     spec:
-      service: foobar
+      service: foobar.foobar-namespace
       backends:
       - service: foobar-v1
         weight: 1000
@@ -284,7 +295,7 @@ At this point, the SMI implementation does not redirect any traffic to
     metadata:
       name: foobar-rollout
     spec:
-      service: foobar
+      service: foobar.foobar-namespace
       backends:
       - service: foobar-v2
         weight: 1
@@ -361,7 +372,7 @@ Assume a `TrafficSplit` object that looks like:
     metadata:
       name: my-canary
     spec:
-      service: web
+      service: web.web-namespace
       backends:
       - service: web-next
         weight: 100
@@ -372,7 +383,7 @@ Assume a `TrafficSplit` object that looks like:
 When a new `TrafficSplit` object is created, it instantiates the following Kubernetes
 objects:
 
-* Service who's name is the same as `spec.service` in the TrafficSplit (`web`)
+* Service that resolves to `spec.service` in the TrafficSplit (`web.web-namespace`)
 * A Deployment running `nginx` which has labels that match the Service
 
 The nginx layer serves as an HTTP(s) layer which implements the canary. In
@@ -385,5 +396,5 @@ upstream backend {
 }
 ```
 
-Thus the new `web` service when accessed from a client in Kubernetes will send
-10% of it's traffic to `web-next` and 90% of it's traffic to `web-current`.
+Thus the new `web.web-namespace` service when accessed from a client in Kubernetes
+will send 10% of it's traffic to `web-next` and 90% of it's traffic to `web-current`.
